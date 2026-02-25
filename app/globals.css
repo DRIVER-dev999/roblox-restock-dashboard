@@ -1,0 +1,9 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+body {
+  background-color: #020617; /* สีมืดๆ แบบที่เราตั้งไว้ */
+  margin: 0;
+  padding: 0;
+}
