@@ -1,7 +1,7 @@
 "use client"
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { createClient } from '@supabase/supabase-js';
-import { Bell, BellRing } from 'lucide-react';
+import { Bell, BellRing, CheckCircle2 } from 'lucide-react';
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL || '';
 const SUPABASE_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '';
@@ -12,8 +12,14 @@ export default function Dashboard() {
   const [countdown, setCountdown] = useState("0:00");
   const [filter, setFilter] = useState<'all' | 'instock'>('all');
   const [notif, setNotif] = useState(false);
+  const notifiedZero = useRef(false); // ป้องกันการเด้งแจ้งเตือน 0:00 ซ้ำรัวๆ
 
   useEffect(() => {
+    // เช็คสิทธิ์แจ้งเตือนตอนโหลดเว็บ
+    if (typeof window !== 'undefined' && Notification.permission === 'granted') {
+      setNotif(true);
+    }
+
     const fetchInitial = async () => {
       const { data } = await supabase.from('restock_logs').select('*');
       if (data) setItems(data);
@@ -22,9 +28,12 @@ export default function Dashboard() {
 
     const channel = supabase.channel('realtime').on('postgres_changes', { event: '*', schema: 'public', table: 'restock_logs' }, (payload: any) => {
       const newData = payload.new;
+      
+      // แจ้งเตือนเมื่อมีของเข้า (Real-time)
       if (notif && newData.current_stock > 0) {
-        new Notification(`🔥 ${newData.item_name} RE-STOCK!`);
+        new Notification(`🔥 ของเข้าแล้ว: ${newData.item_name} !`);
       }
+      
       setItems(prev => {
         const exists = prev.find(i => i.item_name === newData.item_name);
         return exists ? prev.map(i => i.item_name === newData.item_name ? newData : i) : [newData, ...prev];
@@ -34,12 +43,9 @@ export default function Dashboard() {
     return () => { supabase.removeChannel(channel); };
   }, [notif]);
 
-  // 🛠️ แก้บั๊กเวลานับถอยหลัง (ทนทานต่อ Timezone)
   useEffect(() => {
-    const updateTimer = () => {
+    const timerInterval = setInterval(() => {
       if (items.length === 0) return;
-      
-      // หาไอเทมที่เพิ่งถูกอัปเดตล่าสุด
       const sorted = [...items].sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime());
       const latest = sorted.find(i => i.next_refresh && i.next_refresh.includes(':'));
 
@@ -47,13 +53,10 @@ export default function Dashboard() {
         const [min, sec] = latest.next_refresh.split(':').map(Number);
         const totalSecInGame = (min * 60) + sec;
         
-        // เวลาจาก Supabase จะเป็น UTC เสมอ
         const sentTime = new Date(latest.updated_at).getTime();
         const nowTime = Date.now();
-        
-        // คำนวณวินาทีที่ผ่านไป (ป้องกันค่าติดลบถ้าเวลาคอมไม่ตรง)
         let passed = Math.floor((nowTime - sentTime) / 1000);
-        if (passed < 0) passed = 0; 
+        if (passed < 0) passed = 0;
 
         const remain = totalSecInGame - passed;
 
@@ -61,20 +64,39 @@ export default function Dashboard() {
           const m = Math.floor(remain / 60);
           const s = remain % 60;
           setCountdown(`${m}:${s < 10 ? '0' + s : s}`);
+          notifiedZero.current = false; // รีเซ็ตการแจ้งเตือน 0:00
         } else {
-          setCountdown("0:00");
+          setCountdown("RE-STOCKING...");
+          // แจ้งเตือนเมื่อเวลานับถึง 0:00
+          if (!notifiedZero.current && notif) {
+            new Notification("⏳ หมดเวลาแล้ว! กำลังรอข้อมูลรีสต็อกจากบอท...");
+            notifiedZero.current = true;
+          }
         }
       }
-    };
+    }, 1000);
 
-    updateTimer(); // รันทันที 1 รอบ
-    const timerInterval = setInterval(updateTimer, 1000); // รันซ้ำทุก 1 วิ
     return () => clearInterval(timerInterval);
-  }, [items]);
+  }, [items, notif]);
+
+  // ฟังก์ชันกดทดสอบแจ้งเตือน
+  const testNotification = () => {
+    if (Notification.permission === 'granted') {
+      new Notification("🔔 ทดสอบสำเร็จ! ระบบแจ้งเตือนทำงานปกติ");
+    } else {
+      Notification.requestPermission().then(p => {
+        if (p === 'granted') {
+          setNotif(true);
+          new Notification("🔔 เปิดการแจ้งเตือนสำเร็จ!");
+        } else {
+          alert("คุณบล็อกการแจ้งเตือนไว้ กรุณาไปเปิดที่ตั้งค่าเบราว์เซอร์ครับ");
+        }
+      });
+    }
+  };
 
   const ItemCard = ({ item }: { item: any }) => (
-    // 🎨 แก้บั๊กเมาส์เด้งรัวๆ: ใช้ hover:-translate-y-3 (ลอยขึ้น) แทนการขยายขนาด (scale)
-    <div className="group relative bg-slate-900/40 backdrop-blur-xl border border-purple-900/40 p-8 rounded-[2.5rem] transition-all duration-500 ease-out hover:-translate-y-3 hover:border-purple-500 hover:shadow-[0_20px_40px_-15px_rgba(168,85,247,0.5)]">
+    <div className="group relative bg-[#0a0216]/80 backdrop-blur-xl border border-purple-900/40 p-8 rounded-[2.5rem] transition-all duration-500 ease-out hover:-translate-y-3 hover:border-purple-500 hover:shadow-[0_20px_40px_-15px_rgba(168,85,247,0.5)]">
       <div className="flex justify-between items-start mb-6">
         <h3 className="text-xl font-black text-white group-hover:text-purple-300 uppercase tracking-wide transition-colors">{item.item_name}</h3>
         <span className={`px-3 py-1 rounded-lg text-[9px] font-black border tracking-widest ${item.current_stock > 0 ? 'bg-green-500/10 text-green-400 border-green-500/30 shadow-[0_0_10px_rgba(34,197,94,0.2)]' : 'bg-red-500/10 text-red-400 border-red-500/30'}`}>
@@ -99,17 +121,21 @@ export default function Dashboard() {
 
   return (
     <div className="min-h-screen bg-[#020005] text-white p-6 md:p-12 font-sans overflow-x-hidden selection:bg-purple-600">
-      {/* 🔮 Vibe แสงออร่าด้านหลัง (นำกลับมาแล้ว) */}
+      {/* 🔮 Vibe แสงออร่าด้านหลังจัดเต็ม */}
       <div className="fixed top-[-20%] left-[-10%] w-[50%] h-[50%] bg-purple-900/20 blur-[150px] rounded-full mix-blend-screen pointer-events-none"></div>
       <div className="fixed bottom-[-20%] right-[-10%] w-[50%] h-[50%] bg-blue-900/10 blur-[150px] rounded-full mix-blend-screen pointer-events-none"></div>
       
-      {/* 🔔 ปุ่มแจ้งเตือนมุมซ้ายบน (สวยงามและชัดเจนขึ้น) */}
-      <button onClick={() => Notification.requestPermission().then(p => p==='granted' && setNotif(true))} 
-        className="fixed top-6 left-6 z-50 p-4 bg-purple-950/50 backdrop-blur-md border border-purple-500/40 rounded-full hover:bg-purple-600 transition-all duration-300 shadow-[0_0_20px_rgba(168,85,247,0.3)] hover:shadow-[0_0_30px_rgba(168,85,247,0.6)] group cursor-pointer">
-        {notif ? <BellRing className="text-yellow-400 animate-bounce drop-shadow-[0_0_8px_rgba(250,204,21,0.6)]" /> : <Bell className="text-purple-300 group-hover:text-white" />}
-      </button>
+      {/* 🔔 ส่วนของปุ่มแจ้งเตือน และ ปุ่มทดสอบ */}
+      <div className="fixed top-6 left-6 z-50 flex flex-col gap-3">
+        <button onClick={testNotification} className="flex items-center gap-3 px-4 py-3 bg-purple-950/50 backdrop-blur-md border border-purple-500/40 rounded-full hover:bg-purple-600 transition-all duration-300 shadow-[0_0_20px_rgba(168,85,247,0.3)] group cursor-pointer">
+          {notif ? <BellRing className="text-yellow-400 animate-bounce" size={20} /> : <Bell className="text-purple-300" size={20} />}
+          <span className="text-[10px] font-black tracking-widest uppercase text-purple-200 group-hover:text-white">
+            {notif ? 'Alert ON (Test)' : 'Enable Alert'}
+          </span>
+        </button>
+      </div>
 
-      <div className="max-w-7xl mx-auto relative z-10">
+      <div className="max-w-7xl mx-auto relative z-10 mt-10">
         <header className="flex flex-col items-center mb-24 text-center mt-8">
           <div className="relative mb-8 group">
             <div className="absolute inset-0 bg-purple-600 blur-[80px] opacity-20 scale-150 animate-pulse group-hover:opacity-40 transition-opacity duration-700"></div>
@@ -150,6 +176,15 @@ export default function Dashboard() {
         </section>
 
         <footer className="mt-32 pb-16 border-t border-purple-900/30 pt-16 flex flex-col items-center">
+          {/* โลโก้ติดตามที่หายไป กลับมาแล้ว */}
+          <div className="flex gap-12 grayscale opacity-50 hover:grayscale-0 hover:opacity-100 transition-all duration-500 mb-8">
+            <a href="https://discord.gg/dbq9r6uV8h" target="_blank" className="hover:scale-125 hover:drop-shadow-[0_0_15px_#5865F2] transition-all">
+              <img src="https://images-eds-ssl.xboxlive.com/image?url=4rt9.lXDC4H_93laV1_eHHFT949fUipzkiFOBH3fAiZZUCdYojwUyX2aTonS1aIwMrx6NUIsHfUHSLzjGJFxxsG72wAo9EWJR4yQWyJJaDaK1XdUso6cUMpI9hAdPUU_FNs11cY1X284vsHrnWtRw7oqRpN1m9YAg21d_aNKnIo-&format=source" className="w-10 h-10 object-contain" />
+            </a>
+            <a href="https://www.youtube.com/@somtank" target="_blank" className="hover:scale-125 hover:drop-shadow-[0_0_15px_#FF0000] transition-all">
+              <img src="https://upload.wikimedia.org/wikipedia/commons/e/ef/Youtube_logo.png" className="w-10 h-10 object-contain" />
+            </a>
+          </div>
           <p className="text-[10px] font-black tracking-[0.8em] text-slate-700 uppercase italic mb-2">Made with love</p>
           <p className="text-sm font-black tracking-[0.4em] text-purple-800 uppercase italic">By Somtank X Driver</p>
         </footer>
