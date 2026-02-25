@@ -1,7 +1,7 @@
 "use client"
 import { useEffect, useState, useRef } from 'react';
 import { createClient } from '@supabase/supabase-js';
-import { Bell, BellRing, CheckCircle2 } from 'lucide-react';
+import { Bell, BellRing, Volume2 } from 'lucide-react';
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL || '';
 const SUPABASE_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '';
@@ -12,10 +12,29 @@ export default function Dashboard() {
   const [countdown, setCountdown] = useState("0:00");
   const [filter, setFilter] = useState<'all' | 'instock'>('all');
   const [notif, setNotif] = useState(false);
-  const notifiedZero = useRef(false); // ป้องกันการเด้งแจ้งเตือน 0:00 ซ้ำรัวๆ
+  const notifiedZero = useRef(false);
+
+  // 🔊 ฟังก์ชันเล่นเสียงแจ้งเตือน (ดึงไฟล์เสียงล้ำๆ จากเซิร์ฟเวอร์ฟรี)
+  const playAlertSound = () => {
+    try {
+      // ใช้เสียงแจ้งเตือนสไตล์ Futuristic/Sci-Fi
+      const audio = new Audio("https://assets.mixkit.co/active_storage/sfx/2869/2869-preview.mp3");
+      audio.volume = 0.6; // ความดัง 60%
+      audio.play().catch(e => console.log("เบราว์เซอร์บล็อกการเล่นเสียงอัตโนมัติ ให้ผู้ใช้คลิกหน้าเว็บก่อน"));
+    } catch (error) {
+      console.error("Audio playback error", error);
+    }
+  };
+
+  // 🔔 ฟังก์ชันสั่งแจ้งเตือน + เล่นเสียง
+  const triggerNotification = (title: string, body?: string) => {
+    playAlertSound(); // เล่นเสียงทันที
+    if (Notification.permission === 'granted') {
+      new Notification(title, { body: body, icon: "https://raw.githubusercontent.com/somtdays-cmd/Info-web/refs/heads/main/BigIcon.png" });
+    }
+  };
 
   useEffect(() => {
-    // เช็คสิทธิ์แจ้งเตือนตอนโหลดเว็บ
     if (typeof window !== 'undefined' && Notification.permission === 'granted') {
       setNotif(true);
     }
@@ -31,7 +50,7 @@ export default function Dashboard() {
       
       // แจ้งเตือนเมื่อมีของเข้า (Real-time)
       if (notif && newData.current_stock > 0) {
-        new Notification(`🔥 ของเข้าแล้ว: ${newData.item_name} !`);
+        triggerNotification(`🔥 ของเข้าแล้ว: ${newData.item_name} !`, `รีบเข้าไปซื้อเลย สต็อก: ${newData.current_stock}`);
       }
       
       setItems(prev => {
@@ -64,12 +83,11 @@ export default function Dashboard() {
           const m = Math.floor(remain / 60);
           const s = remain % 60;
           setCountdown(`${m}:${s < 10 ? '0' + s : s}`);
-          notifiedZero.current = false; // รีเซ็ตการแจ้งเตือน 0:00
+          notifiedZero.current = false;
         } else {
           setCountdown("RE-STOCKING...");
-          // แจ้งเตือนเมื่อเวลานับถึง 0:00
           if (!notifiedZero.current && notif) {
-            new Notification("⏳ หมดเวลาแล้ว! กำลังรอข้อมูลรีสต็อกจากบอท...");
+            triggerNotification("⏳ หมดเวลาแล้ว!", "กำลังรอข้อมูลอัปเดตสต็อกสินค้าจากบอท...");
             notifiedZero.current = true;
           }
         }
@@ -82,14 +100,14 @@ export default function Dashboard() {
   // ฟังก์ชันกดทดสอบแจ้งเตือน
   const testNotification = () => {
     if (Notification.permission === 'granted') {
-      new Notification("🔔 ทดสอบสำเร็จ! ระบบแจ้งเตือนทำงานปกติ");
+      triggerNotification("✅ ระบบแจ้งเตือนทำงานปกติ!", "เสียงและป๊อปอัปทำงานสมบูรณ์");
     } else {
       Notification.requestPermission().then(p => {
         if (p === 'granted') {
           setNotif(true);
-          new Notification("🔔 เปิดการแจ้งเตือนสำเร็จ!");
+          triggerNotification("🔔 เปิดการแจ้งเตือนสำเร็จ!", "ยินดีด้วย คุณเปิดแจ้งเตือนแล้ว");
         } else {
-          alert("คุณบล็อกการแจ้งเตือนไว้ กรุณาไปเปิดที่ตั้งค่าเบราว์เซอร์ครับ");
+          alert("❌ คุณบล็อกการแจ้งเตือนไว้! โปรดกดที่รูปแม่กุญแจ 🔒 บน URL Bar แล้วเปลี่ยน Notifications เป็น Allow");
         }
       });
     }
@@ -121,16 +139,15 @@ export default function Dashboard() {
 
   return (
     <div className="min-h-screen bg-[#020005] text-white p-6 md:p-12 font-sans overflow-x-hidden selection:bg-purple-600">
-      {/* 🔮 Vibe แสงออร่าด้านหลังจัดเต็ม */}
       <div className="fixed top-[-20%] left-[-10%] w-[50%] h-[50%] bg-purple-900/20 blur-[150px] rounded-full mix-blend-screen pointer-events-none"></div>
       <div className="fixed bottom-[-20%] right-[-10%] w-[50%] h-[50%] bg-blue-900/10 blur-[150px] rounded-full mix-blend-screen pointer-events-none"></div>
       
-      {/* 🔔 ส่วนของปุ่มแจ้งเตือน และ ปุ่มทดสอบ */}
+      {/* 🔔 ปุ่มแจ้งเตือน มุมซ้ายบน */}
       <div className="fixed top-6 left-6 z-50 flex flex-col gap-3">
-        <button onClick={testNotification} className="flex items-center gap-3 px-4 py-3 bg-purple-950/50 backdrop-blur-md border border-purple-500/40 rounded-full hover:bg-purple-600 transition-all duration-300 shadow-[0_0_20px_rgba(168,85,247,0.3)] group cursor-pointer">
-          {notif ? <BellRing className="text-yellow-400 animate-bounce" size={20} /> : <Bell className="text-purple-300" size={20} />}
-          <span className="text-[10px] font-black tracking-widest uppercase text-purple-200 group-hover:text-white">
-            {notif ? 'Alert ON (Test)' : 'Enable Alert'}
+        <button onClick={testNotification} className="flex items-center gap-3 px-5 py-3 bg-[#0a0216]/80 backdrop-blur-md border border-purple-500/40 rounded-full hover:bg-purple-600 transition-all duration-300 shadow-[0_0_20px_rgba(168,85,247,0.3)] hover:shadow-[0_0_30px_rgba(168,85,247,0.6)] group cursor-pointer">
+          {notif ? <Volume2 className="text-yellow-400 animate-pulse" size={20} /> : <Bell className="text-purple-300 group-hover:text-white" size={20} />}
+          <span className="text-[10px] font-black tracking-widest uppercase text-purple-200 group-hover:text-white mt-[2px]">
+            {notif ? 'Test Alert' : 'Enable Alert'}
           </span>
         </button>
       </div>
@@ -146,7 +163,7 @@ export default function Dashboard() {
           </h1>
           
           <div className="mt-12 flex flex-col md:flex-row gap-8 items-center">
-            <div className="bg-[#050012]/80 backdrop-blur-md border border-purple-500/30 px-14 py-6 rounded-[2rem] shadow-[inset_0_0_30px_rgba(168,85,247,0.1),0_0_20px_rgba(168,85,247,0.2)]">
+            <div className="bg-[#050012]/80 backdrop-blur-md border border-purple-500/30 px-14 py-6 rounded-[2rem] shadow-[inset_0_0_30px_rgba(168,85,247,0.1),0_0_20px_rgba(168,85,247,0.2)] flex flex-col items-center">
               <span className="text-[10px] block text-purple-400 font-black tracking-[0.5em] mb-2">NEXT REFRESH</span>
               <span className="text-5xl font-mono font-black text-white tracking-widest drop-shadow-[0_0_15px_rgba(255,255,255,0.4)]">{countdown}</span>
             </div>
@@ -176,7 +193,6 @@ export default function Dashboard() {
         </section>
 
         <footer className="mt-32 pb-16 border-t border-purple-900/30 pt-16 flex flex-col items-center">
-          {/* โลโก้ติดตามที่หายไป กลับมาแล้ว */}
           <div className="flex gap-12 grayscale opacity-50 hover:grayscale-0 hover:opacity-100 transition-all duration-500 mb-8">
             <a href="https://discord.gg/dbq9r6uV8h" target="_blank" className="hover:scale-125 hover:drop-shadow-[0_0_15px_#5865F2] transition-all">
               <img src="https://images-eds-ssl.xboxlive.com/image?url=4rt9.lXDC4H_93laV1_eHHFT949fUipzkiFOBH3fAiZZUCdYojwUyX2aTonS1aIwMrx6NUIsHfUHSLzjGJFxxsG72wAo9EWJR4yQWyJJaDaK1XdUso6cUMpI9hAdPUU_FNs11cY1X284vsHrnWtRw7oqRpN1m9YAg21d_aNKnIo-&format=source" className="w-10 h-10 object-contain" />
