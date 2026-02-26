@@ -12,23 +12,25 @@ export default function Dashboard() {
   const [countdown, setCountdown] = useState("0:00");
   const [filter, setFilter] = useState<'all' | 'instock'>('all');
   const [notif, setNotif] = useState(false);
+  
   const notifiedZero = useRef(false);
+  const lastNotifiedTime = useRef(0); // ตัวแปรป้องกันการแจ้งเตือน Spam
+  const [targetTimestamp, setTargetTimestamp] = useState<number | null>(null);
 
-  // 🔊 ฟังก์ชันเล่นเสียงแจ้งเตือน (ดึงไฟล์เสียงล้ำๆ จากเซิร์ฟเวอร์ฟรี)
+  // 🔊 ฟังก์ชันเล่นเสียงแจ้งเตือน (ดึงจากไฟล์ /alert.mp3 ในโฟลเดอร์ public)
   const playAlertSound = () => {
     try {
-      // ใช้เสียงแจ้งเตือนสไตล์ Futuristic/Sci-Fi
-      const audio = new Audio("https://assets.mixkit.co/active_storage/sfx/2869/2869-preview.mp3");
-      audio.volume = 0.6; // ความดัง 60%
-      audio.play().catch(e => console.log("เบราว์เซอร์บล็อกการเล่นเสียงอัตโนมัติ ให้ผู้ใช้คลิกหน้าเว็บก่อน"));
+      const audio = new Audio("/alert.mp3"); 
+      audio.volume = 1.0; // เปิดเสียงดังสุด
+      audio.play().catch(e => console.log("เบราว์เซอร์รอให้ผู้ใช้คลิกหน้าเว็บก่อนเล่นเสียง"));
     } catch (error) {
-      console.error("Audio playback error", error);
+      console.error(error);
     }
   };
 
   // 🔔 ฟังก์ชันสั่งแจ้งเตือน + เล่นเสียง
   const triggerNotification = (title: string, body?: string) => {
-    playAlertSound(); // เล่นเสียงทันที
+    playAlertSound();
     if (Notification.permission === 'granted') {
       new Notification(title, { body: body, icon: "https://raw.githubusercontent.com/somtdays-cmd/Info-web/refs/heads/main/BigIcon.png" });
     }
@@ -48,9 +50,11 @@ export default function Dashboard() {
     const channel = supabase.channel('realtime').on('postgres_changes', { event: '*', schema: 'public', table: 'restock_logs' }, (payload: any) => {
       const newData = payload.new;
       
-      // แจ้งเตือนเมื่อมีของเข้า (Real-time)
-      if (notif && newData.current_stock > 0) {
-        triggerNotification(`🔥 ของเข้าแล้ว: ${newData.item_name} !`, `รีบเข้าไปซื้อเลย สต็อก: ${newData.current_stock}`);
+      // 🛡️ ระบบป้องกัน SPAM: แจ้งเตือนแค่ 1 ครั้งต่อรอบ (เว้นระยะ 60 วินาที)
+      const now = Date.now();
+      if (notif && now - lastNotifiedTime.current > 60000) {
+        triggerNotification("📦 Restock Completed!", "สต็อกร้านค้าถูกอัปเดตแล้ว เข้าไปเช็คไอเทมได้เลย!");
+        lastNotifiedTime.current = now;
       }
       
       setItems(prev => {
@@ -62,52 +66,53 @@ export default function Dashboard() {
     return () => { supabase.removeChannel(channel); };
   }, [notif]);
 
+  // 🛠️ ระบบคำนวณเป้าหมายเวลา (ดึงจากเวลาที่ส่ง updated_at + เวลาในเกม)
   useEffect(() => {
+    if (items.length === 0) return;
+    const latest = items.reduce((prev, current) => (new Date(prev.updated_at) > new Date(current.updated_at)) ? prev : current);
+    
+    if (latest && latest.next_refresh && latest.next_refresh.includes(':')) {
+      const [min, sec] = latest.next_refresh.split(':').map(Number);
+      const totalSecInGame = (min * 60) + sec;
+      const sentTime = new Date(latest.updated_at).getTime();
+      setTargetTimestamp(sentTime + (totalSecInGame * 1000));
+    }
+  }, [items]);
+
+  // ⏱️ ระบบนับถอยหลังอิสระ
+  useEffect(() => {
+    if (!targetTimestamp) return;
     const timerInterval = setInterval(() => {
-      if (items.length === 0) return;
-      const sorted = [...items].sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime());
-      const latest = sorted.find(i => i.next_refresh && i.next_refresh.includes(':'));
-
-      if (latest) {
-        const [min, sec] = latest.next_refresh.split(':').map(Number);
-        const totalSecInGame = (min * 60) + sec;
-        
-        const sentTime = new Date(latest.updated_at).getTime();
-        const nowTime = Date.now();
-        let passed = Math.floor((nowTime - sentTime) / 1000);
-        if (passed < 0) passed = 0;
-
-        const remain = totalSecInGame - passed;
-
-        if (remain > 0) {
-          const m = Math.floor(remain / 60);
-          const s = remain % 60;
-          setCountdown(`${m}:${s < 10 ? '0' + s : s}`);
-          notifiedZero.current = false;
-        } else {
-          setCountdown("RE-STOCKING...");
-          if (!notifiedZero.current && notif) {
-            triggerNotification("⏳ หมดเวลาแล้ว!", "กำลังรอข้อมูลอัปเดตสต็อกสินค้าจากบอท...");
-            notifiedZero.current = true;
-          }
+      const remain = Math.floor((targetTimestamp - Date.now()) / 1000);
+      
+      if (remain > 0) {
+        const m = Math.floor(remain / 60);
+        const s = remain % 60;
+        setCountdown(`${m}:${s < 10 ? '0' + s : s}`);
+        notifiedZero.current = false;
+      } else {
+        setCountdown("RE-STOCKING...");
+        // แจ้งเตือนตอนเวลาหมด (แจ้งแค่รอบเดียว)
+        if (!notifiedZero.current && notif) {
+          triggerNotification("⏳ Time's up!", "กำลังรอข้อมูลรอบใหม่จากบอทในเกม..."); 
+          notifiedZero.current = true;
         }
       }
     }, 1000);
-
     return () => clearInterval(timerInterval);
-  }, [items, notif]);
+  }, [targetTimestamp, notif]);
 
   // ฟังก์ชันกดทดสอบแจ้งเตือน
   const testNotification = () => {
     if (Notification.permission === 'granted') {
-      triggerNotification("✅ ระบบแจ้งเตือนทำงานปกติ!", "เสียงและป๊อปอัปทำงานสมบูรณ์");
+      triggerNotification("✅ ระบบแจ้งเตือนพร้อมใช้งาน!", "เสียงและป๊อปอัปทำงานสมบูรณ์");
     } else {
       Notification.requestPermission().then(p => {
         if (p === 'granted') {
           setNotif(true);
-          triggerNotification("🔔 เปิดการแจ้งเตือนสำเร็จ!", "ยินดีด้วย คุณเปิดแจ้งเตือนแล้ว");
+          triggerNotification("🔔 เปิดการแจ้งเตือนสำเร็จ");
         } else {
-          alert("❌ คุณบล็อกการแจ้งเตือนไว้! โปรดกดที่รูปแม่กุญแจ 🔒 บน URL Bar แล้วเปลี่ยน Notifications เป็น Allow");
+          alert("คุณบล็อกการแจ้งเตือนไว้ กรุณากดที่ไอคอนแม่กุญแจ 🔒 บน URL Bar เพื่ออนุญาตครับ");
         }
       });
     }
@@ -142,9 +147,8 @@ export default function Dashboard() {
       <div className="fixed top-[-20%] left-[-10%] w-[50%] h-[50%] bg-purple-900/20 blur-[150px] rounded-full mix-blend-screen pointer-events-none"></div>
       <div className="fixed bottom-[-20%] right-[-10%] w-[50%] h-[50%] bg-blue-900/10 blur-[150px] rounded-full mix-blend-screen pointer-events-none"></div>
       
-      {/* 🔔 ปุ่มแจ้งเตือน มุมซ้ายบน */}
       <div className="fixed top-6 left-6 z-50 flex flex-col gap-3">
-        <button onClick={testNotification} className="flex items-center gap-3 px-5 py-3 bg-[#0a0216]/80 backdrop-blur-md border border-purple-500/40 rounded-full hover:bg-purple-600 transition-all duration-300 shadow-[0_0_20px_rgba(168,85,247,0.3)] hover:shadow-[0_0_30px_rgba(168,85,247,0.6)] group cursor-pointer">
+        <button onClick={testNotification} className="flex items-center gap-3 px-5 py-3 bg-[#0a0216]/80 backdrop-blur-md border border-purple-500/40 rounded-full hover:bg-purple-600 transition-all duration-300 shadow-[0_0_20px_rgba(168,85,247,0.3)] group cursor-pointer">
           {notif ? <Volume2 className="text-yellow-400 animate-pulse" size={20} /> : <Bell className="text-purple-300 group-hover:text-white" size={20} />}
           <span className="text-[10px] font-black tracking-widest uppercase text-purple-200 group-hover:text-white mt-[2px]">
             {notif ? 'Test Alert' : 'Enable Alert'}
