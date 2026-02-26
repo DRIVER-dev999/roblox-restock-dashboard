@@ -14,21 +14,19 @@ export default function Dashboard() {
   const [notif, setNotif] = useState(false);
   
   const notifiedZero = useRef(false);
-  const lastNotifiedTime = useRef(0); // ตัวแปรป้องกันการแจ้งเตือน Spam
+  const lastNotifiedTime = useRef(0);
   const [targetTimestamp, setTargetTimestamp] = useState<number | null>(null);
 
-  // 🔊 ฟังก์ชันเล่นเสียงแจ้งเตือน (ดึงจากไฟล์ /alert.mp3 ในโฟลเดอร์ public)
   const playAlertSound = () => {
     try {
       const audio = new Audio("/alert.mp3"); 
-      audio.volume = 1.0; // เปิดเสียงดังสุด
+      audio.volume = 1.0;
       audio.play().catch(e => console.log("เบราว์เซอร์รอให้ผู้ใช้คลิกหน้าเว็บก่อนเล่นเสียง"));
     } catch (error) {
       console.error(error);
     }
   };
 
-  // 🔔 ฟังก์ชันสั่งแจ้งเตือน + เล่นเสียง
   const triggerNotification = (title: string, body?: string) => {
     playAlertSound();
     if (Notification.permission === 'granted') {
@@ -49,8 +47,6 @@ export default function Dashboard() {
 
     const channel = supabase.channel('realtime').on('postgres_changes', { event: '*', schema: 'public', table: 'restock_logs' }, (payload: any) => {
       const newData = payload.new;
-      
-      // 🛡️ ระบบป้องกัน SPAM: แจ้งเตือนแค่ 1 ครั้งต่อรอบ (เว้นระยะ 60 วินาที)
       const now = Date.now();
       if (notif && now - lastNotifiedTime.current > 60000) {
         triggerNotification("📦 Restock Completed!", "สต็อกร้านค้าถูกอัปเดตแล้ว เข้าไปเช็คไอเทมได้เลย!");
@@ -66,7 +62,6 @@ export default function Dashboard() {
     return () => { supabase.removeChannel(channel); };
   }, [notif]);
 
-  // 🛠️ ระบบคำนวณเป้าหมายเวลา (ดึงจากเวลาที่ส่ง updated_at + เวลาในเกม)
   useEffect(() => {
     if (items.length === 0) return;
     const latest = items.reduce((prev, current) => (new Date(prev.updated_at) > new Date(current.updated_at)) ? prev : current);
@@ -79,7 +74,6 @@ export default function Dashboard() {
     }
   }, [items]);
 
-  // ⏱️ ระบบนับถอยหลังอิสระ
   useEffect(() => {
     if (!targetTimestamp) return;
     const timerInterval = setInterval(() => {
@@ -92,7 +86,6 @@ export default function Dashboard() {
         notifiedZero.current = false;
       } else {
         setCountdown("RE-STOCKING...");
-        // แจ้งเตือนตอนเวลาหมด (แจ้งแค่รอบเดียว)
         if (!notifiedZero.current && notif) {
           triggerNotification("⏳ Time's up!", "กำลังรอข้อมูลรอบใหม่จากบอทในเกม..."); 
           notifiedZero.current = true;
@@ -102,7 +95,6 @@ export default function Dashboard() {
     return () => clearInterval(timerInterval);
   }, [targetTimestamp, notif]);
 
-  // ฟังก์ชันกดทดสอบแจ้งเตือน
   const testNotification = () => {
     if (Notification.permission === 'granted') {
       triggerNotification("✅ ระบบแจ้งเตือนพร้อมใช้งาน!", "เสียงและป๊อปอัปทำงานสมบูรณ์");
@@ -120,21 +112,24 @@ export default function Dashboard() {
 
   const ItemCard = ({ item }: { item: any }) => (
     <div className="group relative bg-[#0a0216]/80 backdrop-blur-xl border border-purple-900/40 p-8 rounded-[2.5rem] transition-all duration-500 ease-out hover:-translate-y-3 hover:border-purple-500 hover:shadow-[0_20px_40px_-15px_rgba(168,85,247,0.5)]">
+      
+      {/* 🛠️ จุดที่แก้ไข: โชว์จำนวนชิ้นแบบเป๊ะๆ */}
       <div className="flex justify-between items-start mb-6">
         <h3 className="text-xl font-black text-white group-hover:text-purple-300 uppercase tracking-wide transition-colors">{item.item_name}</h3>
-        <span className={`px-3 py-1 rounded-lg text-[9px] font-black border tracking-widest ${item.current_stock > 0 ? 'bg-green-500/10 text-green-400 border-green-500/30 shadow-[0_0_10px_rgba(34,197,94,0.2)]' : 'bg-red-500/10 text-red-400 border-red-500/30'}`}>
-          {item.current_stock > 0 ? 'IN STOCK' : 'OUT STOCK'}
+        <span className={`px-3 py-1.5 rounded-lg text-[10px] whitespace-nowrap font-black border tracking-widest ${item.current_stock > 0 ? 'bg-green-500/10 text-green-400 border-green-500/30 shadow-[0_0_10px_rgba(34,197,94,0.2)]' : 'bg-red-500/10 text-red-400 border-red-500/30'}`}>
+          {item.current_stock > 0 ? `INSTOCK : ${item.current_stock} PIECE` : 'INSTOCK : OUT OF STOCK'}
         </span>
       </div>
+
       <div className="space-y-4">
         <div className="flex justify-between items-end">
           <span className="text-purple-500 text-[10px] font-black uppercase tracking-widest">Price</span>
           <span className="text-3xl font-black text-white drop-shadow-md">${item.price}</span>
         </div>
-        <div className="w-full h-1.5 bg-[#020005] rounded-full overflow-hidden border border-white/5">
-          <div className="h-full bg-gradient-to-r from-purple-600 via-fuchsia-500 to-blue-500 transition-all duration-1000 shadow-[0_0_10px_#a855f7]" style={{ width: `${(item.current_stock/item.max_stock)*100}%` }}></div>
-        </div>
+        {/* 🛠️ จุดที่แก้ไข: เอาหลอด MAX ออก และเปลี่ยนเป็นเส้นขีดแบ่งบางๆ สไตล์ Sci-Fi แทน */}
+        <div className="w-full h-[1px] bg-gradient-to-r from-purple-900/60 to-transparent"></div>
       </div>
+
       <div className="mt-8 pt-6 flex justify-between items-center text-[9px] font-bold text-slate-500 uppercase italic border-t border-white/5">
         <span>Update: {new Date(item.updated_at).toLocaleTimeString('th-TH', {timeZone:'Asia/Bangkok', hour12:false})}</span>
         <a href="https://somtank.rexzy.xyz" target="_blank" className="text-purple-400 hover:text-white transition-colors tracking-widest font-black">Detail ↗</a>
